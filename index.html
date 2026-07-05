@@ -102,8 +102,9 @@ footer{margin-top:22px;text-align:center;color:#5b6a85;font-size:12px;line-heigh
         </div>
         <div class="grp">
           <label for="rngView">시점</label>
-          <input type="range" id="rngView" min="0" max="100" value="52" style="width:100px"
-                 title="왼쪽: 단면 위주 · 오른쪽: 표면(윗면) 위주">
+          <input type="range" id="rngView" min="0" max="100" value="52" style="width:110px"
+                 title="왼쪽: 정면 단면 ↔ 오른쪽: 위에서 내려다보기">
+          <span class="val">단면↔표면</span>
         </div>
         <div class="grp">
           <label><input type="checkbox" id="chkQuake" checked>지진</label>
@@ -256,6 +257,7 @@ const state = {
   clock: 0,                            // 대류·연기 등 흐름용 시계 (재생 중에만 진행)
   show: {quake: true, magma: true, conv: true, labels: true},
 };
+const VIEW = {v: 0.52};                // 카메라 시점(피치): 0=정면 단면 ↔ 1=위에서 내려다보기
 const DURATION = 14;                   // 속도 1일 때 한 사이클(초)
 
 function rnd(i){ const s = Math.sin(i*127.1 + 13.7) * 43758.545; return s - Math.floor(s); }
@@ -289,6 +291,19 @@ function topFace(surfF, colorAt, x0=X0, x1=X1){
     ctx.closePath();
     ctx.fillStyle = colorAt(x); ctx.fill();
   }
+  // 깊이감: 블록 뒤쪽으로 갈수록 어두워지는 음영
+  ctx.beginPath();
+  ctx.moveTo(x0, surfF(x0));
+  for(let x=x0+7; x<=x1; x+=7) ctx.lineTo(x, surfF(x));
+  ctx.lineTo(x1+SK.x, surfF(x1)+SK.y);
+  for(let x=x1-7; x>=x0; x-=7) ctx.lineTo(x+SK.x, surfF(x)+SK.y);
+  ctx.lineTo(x0+SK.x, surfF(x0)+SK.y);
+  ctx.closePath();
+  const mid = (x0+x1)/2;
+  const g = ctx.createLinearGradient(mid, surfF(mid), mid+SK.x, surfF(mid)+SK.y);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(4,8,24,0.32)');
+  ctx.fillStyle = g; ctx.fill();
 }
 // 오른쪽 옆면: X1에서의 층 구조 [{y0,y1,c}] 를 평행사변형으로
 function sideFace(strips){
@@ -506,28 +521,36 @@ function magmaConduit(x0, y0, x1, y1, bend=30, prog=1, srcA=1){
     ctx.beginPath(); ctx.arc(q.x, q.y, 4.5-p*1.5, 0, Math.PI*2); ctx.fill();
   }
 }
-/* ---- 이름표 ---- */
+/* ---- 좌표 변환: 현재(시점 기울기 포함) 변환이 적용된 점을 화면 좌표로 ---- */
+function toScreen(x, y){
+  const p = ctx.getTransform().transformPoint({x, y});
+  return {x: p.x/scale, y: p.y/scale};
+}
+/* ---- 이름표 (시점 기울기와 무관하게 글자는 또렷하게 화면 공간에서 그림) ---- */
 function label(text, x, y, opt={}){
   if(!state.show.labels) return;
+  const sp = toScreen(x, y);
+  const spt = opt.pt ? toScreen(opt.pt[0], opt.pt[1]) : null;
   ctx.save();
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.font = `${opt.bold?'700':'600'} ${opt.size||12.5}px Pretendard,'Noto Sans KR',sans-serif`;
   const w = ctx.measureText(text).width;
-  const px = opt.align==='left' ? x : x - w/2;
-  if(opt.pt){ // 지시선
+  const px = opt.align==='left' ? sp.x : sp.x - w/2;
+  if(spt){ // 지시선
     ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
     ctx.setLineDash([3,3]);
-    ctx.beginPath(); ctx.moveTo(opt.pt[0], opt.pt[1]); ctx.lineTo(x, y+8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(spt.x, spt.y); ctx.lineTo(sp.x, sp.y+8); ctx.stroke();
     ctx.setLineDash([]);
   }
   ctx.fillStyle = opt.bg || 'rgba(8,13,26,0.82)';
   ctx.strokeStyle = opt.border || 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1;
-  const bx = px-7, by = y-11, bw = w+14, bh = 21;
+  const bx = px-7, by = sp.y-11, bw = w+14, bh = 21;
   ctx.beginPath();
   if(ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx,by,bw,bh);
   ctx.fill(); ctx.stroke();
   ctx.fillStyle = opt.color || '#e8edf7';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, px, y+0.5);
+  ctx.fillText(text, px, sp.y+0.5);
   ctx.restore();
 }
 /* ---- 장면 제목 & 시간 표시 ---- */
@@ -1094,7 +1117,9 @@ function sceneTr(t){
       label('⚡ 지진 발생! (슬립)', xc, 150, {bold:true, size:15, color:'#ffe066', border:'rgba(255,224,102,0.6)'});
     }
   }
-  // 응력 게이지 (스틱-슬립 학습 포인트)
+  // 응력 게이지 (스틱-슬립 학습 포인트) — HUD이므로 시점 기울기와 무관하게 화면 공간에
+  ctx.save();
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
   const gx = 24, gy = 78, gw = 150, gh = 13;
   ctx.fillStyle = 'rgba(255,255,255,0.10)';
   ctx.fillRect(gx, gy, gw, gh);
@@ -1107,6 +1132,7 @@ function sceneTr(t){
   ctx.fillStyle = 'rgba(232,237,247,0.85)'; ctx.textBaseline = 'middle';
   ctx.fillText('응력(쌓인 힘)', gx, gy-11);
   ctx.fillText(strain > 0.85 ? '한계 직전…!' : (strain < 0.1 ? '방금 풀림!' : '조금씩 쌓이는 중'), gx+gw+10, gy+gh/2);
+  ctx.restore();
   // 이름표
   label('산안드레아스 단층 (변환 단층)', xc+40, 118, {bold:true, size:14, pt:[(f0.x+f1.x)/2, (f0.y+f1.y)/2]});
   if(S > 0.04) label('도로·하천이 단층을 경계로 어긋남!', 210, 176, {color:'#ffd76e', pt:[topPt(xc-20, 0.42+dz(xc-40)).x, topPt(xc-20, 0.42).y]});
@@ -1167,10 +1193,8 @@ rngSpeed.addEventListener('input', () => {
   state.speed = parseFloat(rngSpeed.value);
   valSpeed.textContent = state.speed.toFixed(2).replace(/0$/,'') + '×';
 });
-$('rngView').addEventListener('input', e => {   // 카메라 시점: 블록 기울기(단면 ↔ 표면)
-  const v = e.target.value/100;
-  SK.x = lerp(36, 120, v);
-  SK.y = lerp(-12, -78, v);
+$('rngView').addEventListener('input', e => {   // 카메라 시점(피치) 조절
+  VIEW.v = e.target.value/100;
 });
 $('chkQuake').addEventListener('change', e => state.show.quake = e.target.checked);
 $('chkMagma').addEventListener('change', e => state.show.magma = e.target.checked);
@@ -1210,7 +1234,13 @@ function frame(now){
   valTime.textContent = Math.round(state.t*100) + '%';
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.clearRect(0, 0, VW, VH);
+  // 카메라 시점(피치): 기울일수록 윗면(표면)이 넓게 열리고 단면 높이는 원근 축소
+  const v = VIEW.v;
+  SK.x = lerp(26, 120, v);
+  SK.y = lerp(-8, -95, v);
+  const vsq = lerp(1, 0.78, v);                   // 세로 축소(내려다보는 효과)
   ctx.save();
+  ctx.transform(1, 0, 0, vsq, 0, YBOT*(1-vsq));   // 블록 바닥 기준으로 눕히기
   SCENES[state.idx](state.t);
   ctx.restore();
   sceneTitle();
