@@ -122,7 +122,7 @@ footer{margin-top:22px;text-align:center;color:#5b6a85;font-size:12px;line-heigh
         <span class="chip"><span class="dot" style="background:#f87171;color:#f87171"></span>수렴(가까워짐)</span>
         <span class="chip"><span class="dot" style="background:#facc15;color:#facc15"></span>보존(어긋남)</span>
       </div>
-      <p class="keys"><kbd>◀</kbd><kbd>▶</kbd> 경계 전환 &nbsp;·&nbsp; <kbd>Space</kbd> 재생/정지 &nbsp;·&nbsp; 🖱️ 화면을 위·아래로 드래그해 입체 시점 조절 (회전 없음)</p>
+      <p class="keys"><kbd>◀</kbd><kbd>▶</kbd> 경계 전환 &nbsp;·&nbsp; <kbd>Space</kbd> 재생/정지 &nbsp;·&nbsp; 🖱️ 드래그 ↕ 위에서 보기 · ↔ 옆에서 보기 &nbsp;·&nbsp; 더블클릭: 기본 시점</p>
     </section>
 
     <aside>
@@ -258,7 +258,7 @@ const state = {
   clock: 0,                            // 대류·연기 등 흐름용 시계 (재생 중에만 진행)
   show: {quake: true, magma: true, conv: true, labels: true},
 };
-const VIEW = {v: 0.52};                // 카메라 시점(피치): 0=정면 단면 ↔ 1=위에서 내려다보기
+const VIEW = {v: 0.52, yaw: 0.30};     // 카메라 시점 — v(피치): 0=정면 ↔ 1=내려다보기, yaw: 0=오른쪽 깊이 ↔ 1=왼쪽 깊이
 const DURATION = 14;                   // 속도 1일 때 한 사이클(초)
 
 function rnd(i){ const s = Math.sin(i*127.1 + 13.7) * 43758.545; return s - Math.floor(s); }
@@ -306,20 +306,33 @@ function topFace(surfF, colorAt, x0=X0, x1=X1){
   g.addColorStop(1, 'rgba(4,8,24,0.32)');
   ctx.fillStyle = g; ctx.fill();
 }
-// 오른쪽 옆면: X1에서의 층 구조 [{y0,y1,c}] 를 평행사변형으로
-function sideFace(strips){
+// 옆면: 시점(좌우)에 따라 보이는 쪽 가장자리의 층 구조를 평행사변형으로
+function sideFace(stripsFn){
+  const xe = SK.x >= 0 ? X1 : X0;      // 깊이 방향에 따라 오른쪽/왼쪽 옆면이 보임
+  const strips = stripsFn(xe);
   for(const s of strips){
     ctx.beginPath();
-    ctx.moveTo(X1, s.y0); ctx.lineTo(X1+SK.x, s.y0+SK.y);
-    ctx.lineTo(X1+SK.x, s.y1+SK.y); ctx.lineTo(X1, s.y1);
+    ctx.moveTo(xe, s.y0); ctx.lineTo(xe+SK.x, s.y0+SK.y);
+    ctx.lineTo(xe+SK.x, s.y1+SK.y); ctx.lineTo(xe, s.y1);
     ctx.closePath(); ctx.fillStyle = s.c; ctx.fill();
   }
   // 옆면 전체를 살짝 어둡게 → 입체감
   const top = strips[0].y0, bot = strips[strips.length-1].y1;
   ctx.beginPath();
-  ctx.moveTo(X1, top); ctx.lineTo(X1+SK.x, top+SK.y);
-  ctx.lineTo(X1+SK.x, bot+SK.y); ctx.lineTo(X1, bot);
+  ctx.moveTo(xe, top); ctx.lineTo(xe+SK.x, top+SK.y);
+  ctx.lineTo(xe+SK.x, bot+SK.y); ctx.lineTo(xe, bot);
   ctx.closePath(); ctx.fillStyle = 'rgba(0,0,10,0.42)'; ctx.fill();
+}
+// 옆면 층 구조를 지형 함수로부터 자동 구성 (해수면 아래면 물 층 포함)
+function sideAuto(surfF, crustBotF, lithoBotF, crustCol){
+  sideFace(xe => {
+    const s0 = surfF(xe), arr = [];
+    if(s0 > SEA + 0.5) arr.push({y0:SEA, y1:s0, c:'rgba(43,108,224,0.55)'});
+    arr.push({y0:s0, y1:crustBotF(xe), c:(typeof crustCol === 'function') ? crustCol(xe) : crustCol});
+    arr.push({y0:crustBotF(xe), y1:lithoBotF(xe), c:C.litho});
+    arr.push({y0:lithoBotF(xe), y1:YBOT, c:'#8a3812'});
+    return arr;
+  });
 }
 // 블록 테두리(앞면 지표선 + 모서리) 강조
 function blockEdges(surfF){
@@ -329,9 +342,10 @@ function blockEdges(surfF){
   for(let x=X0+5; x<=X1; x+=5) ctx.lineTo(x, surfF(x));
   ctx.stroke();
   ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
+  const xe = SK.x >= 0 ? X1 : X0, xo = SK.x >= 0 ? X0 : X1;
   ctx.beginPath();
-  ctx.moveTo(X0, surfF(X0)); ctx.lineTo(X0+SK.x, surfF(X0)+SK.y);
-  ctx.moveTo(X1, YBOT); ctx.lineTo(X1+SK.x, YBOT+SK.y);
+  ctx.moveTo(xo, surfF(xo)); ctx.lineTo(xo+SK.x, surfF(xo)+SK.y);
+  ctx.moveTo(xe, YBOT); ctx.lineTo(xe+SK.x, YBOT+SK.y);
   ctx.stroke();
 }
 // 바닷물: surf(x) > SEA 인 곳(해수면 아래)에 반투명 물 채우기
@@ -627,12 +641,7 @@ function sceneRidge(t){
     const k = Math.floor((spread - d)/bandW);
     return k%2===0 ? C.stripeA : C.stripeB;
   });
-  sideFace([
-    {y0:SEA, y1:surf(X1), c:'rgba(43,108,224,0.55)'},
-    {y0:surf(X1), y1:crustBot(X1), c:C.oceanCrust},
-    {y0:crustBot(X1), y1:lithoBot(X1), c:C.litho},
-    {y0:lithoBot(X1), y1:YBOT, c:'#8a3812'},
-  ]);
+  sideAuto(surf, crustBot, lithoBot, C.oceanCrust);
   blockEdges(surf);
   // 해령 꼭대기 분출(수중) — 마그마가 지표에 도달한 뒤
   if(state.show.magma && t > 0.32){
@@ -706,11 +715,7 @@ function sceneRift(t){
     if(dx < w) return '#6b5a2e';
     return (Math.floor(x/34)%2===0) ? '#7d6f35' : '#77682f';
   });
-  sideFace([
-    {y0:surf(X1), y1:crustBot(X1), c:C.contCrust},
-    {y0:crustBot(X1), y1:lithoBot(X1), c:C.litho},
-    {y0:lithoBot(X1), y1:YBOT, c:'#8a3812'},
-  ]);
+  sideAuto(surf, crustBot, lithoBot, C.contCrust);
   blockEdges(surf);
   // 정단층선 (계단 경계, 점선)
   ctx.save(); ctx.setLineDash([4,4]);
@@ -853,11 +858,7 @@ function sceneOC(t){
     if(y < 205) return '#8b7d5a';        // 바위산
     return (Math.floor(x/30)%2===0) ? '#5f7a45' : '#587340';
   });
-  sideFace([
-    {y0:surf(X1), y1:crustBot(X1), c:C.contCrust},
-    {y0:crustBot(X1), y1:lithoBot(X1), c:C.litho},
-    {y0:lithoBot(X1), y1:YBOT, c:'#8a3812'},
-  ]);
+  sideAuto(surf, crustBot, lithoBot, xe => xe < xt ? C.oceanCrust : C.contCrust);
   blockEdges(surf);
   // 육상 화산(화산대) — 대륙 안쪽! 마그마 통로 끝(xv) 바로 위에서, 지표 도달 후에만 성장
   const vg = phase(t, 0.72, 0.97);
@@ -900,12 +901,7 @@ function sceneOO(t){
     magmaConduit(xa, 462, xa, surf(xa)+2, 0, phase(t, 0.5, 0.74), phase(t, 0.36, 0.5));
   }
   topFace(surf, x => x < xt ? '#3f4f59' : '#51636f');
-  sideFace([
-    {y0:SEA, y1:surf(X1), c:'rgba(43,108,224,0.55)'},
-    {y0:surf(X1), y1:crustBot(X1), c:C.oceanCrust},
-    {y0:crustBot(X1), y1:lithoBot(X1), c:C.litho},
-    {y0:lithoBot(X1), y1:YBOT, c:'#8a3812'},
-  ]);
+  sideAuto(surf, crustBot, lithoBot, C.oceanCrust);
   blockEdges(surf);
   // 대표 화산섬 1개: 마그마 통로(xa) 바로 위에서 성장 (물보다 먼저 그리면 잠긴 부분이 물빛)
   const vBaseY = surf(xa)+4, vTopY = vBaseY - vh;
@@ -1009,11 +1005,7 @@ function sceneCC(t){
     if(y < 200) return '#8b7d5a';
     return (Math.floor(x/30)%2===0) ? '#5f7a45' : '#587340';
   });
-  sideFace([
-    {y0:surf(X1), y1:crustBot(X1), c:'#957850'},
-    {y0:crustBot(X1), y1:lithoBot(X1), c:C.litho},
-    {y0:lithoBot(X1), y1:YBOT, c:'#8a3812'},
-  ]);
+  sideAuto(surf, crustBot, lithoBot, xe => xe < xc ? '#8a6d3b' : '#957850');
   blockEdges(surf);
   drawWater(surf);                       // 닫히는 옛 바다(테티스해)
   // 지진: 천발~중발만, 넓게 분포 (심발 없음!) — 충돌이 시작된 뒤
@@ -1091,11 +1083,7 @@ function sceneTr(t){
     }
   }
   topFace(surf, x => (Math.floor(x/38)%2===0) ? '#8d7443' : '#87703f');
-  sideFace([
-    {y0:surf(X1), y1:crustBot(X1), c:'#7a5f3a'},
-    {y0:crustBot(X1), y1:lithoBot(X1), c:C.litho},
-    {y0:lithoBot(X1), y1:YBOT, c:'#8a3812'},
-  ]);
+  sideAuto(surf, crustBot, lithoBot, '#7a5f3a');
   blockEdges(surf);
   const topPt = (x, z) => ({x: x + SK.x*z, y: 250 + SK.y*z});
   // 덤불(블록과 함께 이동 → 판 전체가 움직이는 게 보임)
@@ -1232,21 +1220,27 @@ rngSpeed.addEventListener('input', () => {
 $('rngView').addEventListener('input', e => {   // 카메라 시점(피치) 조절
   VIEW.v = e.target.value/100;
 });
-// 캔버스를 위·아래로 드래그해도 시점(피치)이 바뀜 — 회전은 없음
-let viewDragY = null;
+// 캔버스 드래그로 시점 조절: ↕ = 위에서 내려다보기, ↔ = 옆에서 보기 (뒤집기 없음)
+let viewDragX = null, viewDragY = null;
 cv.addEventListener('pointerdown', e => {
-  viewDragY = e.clientY;
+  viewDragX = e.clientX; viewDragY = e.clientY;
   cv.setPointerCapture(e.pointerId);
 });
 cv.addEventListener('pointermove', e => {
   if(viewDragY === null) return;
+  const dx = e.clientX - viewDragX; viewDragX = e.clientX;
   const dy = e.clientY - viewDragY; viewDragY = e.clientY;
-  VIEW.v = clamp(VIEW.v - dy*0.0042, 0, 1);   // 위로 드래그 = 내려다보기
+  VIEW.v   = clamp(VIEW.v - dy*0.0042, 0, 1);    // 위로 드래그 = 내려다보기
+  VIEW.yaw = clamp(VIEW.yaw + dx*0.003, 0, 1);   // 옆으로 드래그 = 옆에서 보기
   $('rngView').value = VIEW.v*100;
 });
-const endViewDrag = () => { viewDragY = null; };
+const endViewDrag = () => { viewDragX = null; viewDragY = null; };
 cv.addEventListener('pointerup', endViewDrag);
 cv.addEventListener('pointercancel', endViewDrag);
+cv.addEventListener('dblclick', () => {          // 더블클릭: 기본 시점으로
+  VIEW.v = 0.52; VIEW.yaw = 0.30;
+  $('rngView').value = 52;
+});
 $('chkQuake').addEventListener('change', e => state.show.quake = e.target.checked);
 $('chkMagma').addEventListener('change', e => state.show.magma = e.target.checked);
 $('chkConv').addEventListener('change', e => state.show.conv = e.target.checked);
@@ -1285,13 +1279,17 @@ function frame(now){
   valTime.textContent = Math.round(state.t*100) + '%';
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.clearRect(0, 0, VW, VH);
-  // 카메라 시점(피치): 기울일수록 윗면(표면)이 넓게 열리고 단면 높이는 원근 축소
-  const v = VIEW.v;
-  SK.x = lerp(26, 120, v);
-  SK.y = lerp(-8, -95, v);
-  const vsq = lerp(1, 0.78, v);                   // 세로 축소(내려다보는 효과)
+  // 카메라 시점: ↔ 드래그 = 옆에서 보기(좌우), ↕ 드래그 = 위에서 내려다보기
+  const pv = VIEW.v;
+  const yawAng = (VIEW.yaw - 0.5) * 1.7;            // 좌우 최대 약 ±49°
+  SK.x = -Math.sin(yawAng) * 165;                   // 깊이 방향(좌/우)
+  SK.y = -8 - Math.cos(yawAng) * lerp(4, 96, pv);   // 깊이 방향(위)
+  const vsq = lerp(1, 0.75, pv);                    // 세로 축소(내려다보는 효과)
+  const hsq = 1 - 0.32 * Math.abs(VIEW.yaw - 0.5);  // 가로 축소(옆에서 보는 효과)
   ctx.save();
-  ctx.transform(1, 0, 0, vsq, 0, YBOT*(1-vsq));   // 블록 바닥 기준으로 눕히기
+  ctx.translate(VW/2 - SK.x/2, YBOT*(1-vsq));       // 블록이 화면 중앙·바닥 기준 유지
+  ctx.scale(hsq, vsq);
+  ctx.translate(-VW/2, 0);
   SCENES[state.idx](state.t);
   ctx.restore();
   sceneTitle();
