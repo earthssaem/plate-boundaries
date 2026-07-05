@@ -32,7 +32,8 @@ header p.sub{color:var(--mut);margin-top:6px;font-size:14px}
 main{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:16px;margin-top:12px}
 @media(max-width:980px){main{grid-template-columns:1fr}}
 .stage{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px}
-canvas{width:100%;display:block;border-radius:12px;background:linear-gradient(#0d1830 0%,#0a1122 55%,#080d18 100%);touch-action:manipulation}
+canvas{width:100%;display:block;border-radius:12px;background:linear-gradient(#0d1830 0%,#0a1122 55%,#080d18 100%);touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
 .controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:12px;padding:10px 12px;
   background:var(--card2);border:1px solid var(--line);border-radius:12px}
 .controls .grp{display:flex;align-items:center;gap:8px}
@@ -121,7 +122,7 @@ footer{margin-top:22px;text-align:center;color:#5b6a85;font-size:12px;line-heigh
         <span class="chip"><span class="dot" style="background:#f87171;color:#f87171"></span>수렴(가까워짐)</span>
         <span class="chip"><span class="dot" style="background:#facc15;color:#facc15"></span>보존(어긋남)</span>
       </div>
-      <p class="keys"><kbd>◀</kbd><kbd>▶</kbd> 경계 전환 &nbsp;·&nbsp; <kbd>Space</kbd> 재생/정지 &nbsp;·&nbsp; 시점 슬라이더로 단면↔표면 기울기 조절</p>
+      <p class="keys"><kbd>◀</kbd><kbd>▶</kbd> 경계 전환 &nbsp;·&nbsp; <kbd>Space</kbd> 재생/정지 &nbsp;·&nbsp; 🖱️ 화면을 위·아래로 드래그해 입체 시점 조절 (회전 없음)</p>
     </section>
 
     <aside>
@@ -499,7 +500,7 @@ function magmaConduit(x0, y0, x1, y1, bend=30, prog=1, srcA=1){
   const pul = 0.5+0.5*Math.sin(state.clock*2.2);
   ctx.fillStyle = `rgba(255,90,30,${((0.55+0.3*pul)*srcA).toFixed(3)})`;
   ctx.beginPath();
-  ctx.ellipse(x0, y0, (13+3*pul)*(0.4+0.6*srcA), (9+2*pul)*(0.4+0.6*srcA), 0, 0, Math.PI*2);
+  ctx.ellipse(x0, y0, (10+2*pul)*(0.4+0.6*srcA), (7+1.5*pul)*(0.4+0.6*srcA), 0, 0, Math.PI*2);
   ctx.fill();
   if(prog <= 0.02) return;
   // 통로: 진행률만큼만 자람
@@ -511,14 +512,14 @@ function magmaConduit(x0, y0, x1, y1, bend=30, prog=1, srcA=1){
   // 아직 다 오르지 못한 통로의 선단 글로우
   if(prog < 0.999){
     ctx.fillStyle = `rgba(255,140,50,${0.45+0.3*pul})`;
-    ctx.beginPath(); ctx.arc(tip.x, tip.y, 5+2*pul, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(tip.x, tip.y, 4+1.5*pul, 0, Math.PI*2); ctx.fill();
   }
   // 상승 방울
   for(let i=0;i<4;i++){
     const p = ((state.clock*0.28 + i/4) % 1) * prog;
     const q = bez(P0,P1,P2,p);
     ctx.fillStyle = `rgba(255,${140-Math.floor(p*60)},50,${0.9-p*0.3})`;
-    ctx.beginPath(); ctx.arc(q.x, q.y, 4.5-p*1.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(q.x, q.y, 3.4-p*1.2, 0, Math.PI*2); ctx.fill();
   }
 }
 /* ---- 좌표 변환: 현재(시점 기울기 포함) 변환이 적용된 점을 화면 좌표로 ---- */
@@ -689,15 +690,15 @@ function sceneRift(t){
   // 골짜기 바닥의 새 현무암질 지각 (오개념 포인트!)
   const bw = 140*phase(t, 0.5, 0.95);   // 마그마가 바닥에 도달한 뒤 생성
   if(bw > 2){
-    fillBetween(surf, x=>surf(x)+13, '#3b4d5c', xc-bw, xc+bw);
+    fillBetween(surf, x=>surf(x)+13, '#31383f', xc-bw, xc+bw);
   }
-  // 마그마 상승(골짜기 바닥으로): 중앙 상승부 통로가 지표로 자람
+  // 마그마: 중앙 상승류 → 작은 저장소 → 열곡축 바로 아래에서 "짧은 연직 상승"
   if(t > 0.14){
-    magmaConduit(xc, crustBot(xc)+30, xc, surf(xc)+6, 6, phase(t, 0.22, 0.5), phase(t, 0.14, 0.26));
+    magmaConduit(xc, crustBot(xc)+12, xc, surf(xc)+4, 0, phase(t, 0.22, 0.5), phase(t, 0.14, 0.26));
   }
   topFace(surf, x => {
     const dx = Math.abs(x-xc);
-    if(bw > 2 && dx < bw) return '#3b4d5c';
+    if(bw > 2 && dx < bw) return '#31383f';
     if(dx < w) return '#6b5a2e';
     return (Math.floor(x/34)%2===0) ? '#7d6f35' : '#77682f';
   });
@@ -717,27 +718,56 @@ function sceneRift(t){
       ctx.moveTo(fx + sgn*10, surf(fx + sgn*3) - 4);
       ctx.lineTo(fx - sgn*16, surf(fx - sgn*3) + 42);
       ctx.stroke();
+      // 단층 자취: 윗면을 따라 앞→뒤(깊이 방향)로 이어짐
+      ctx.beginPath();
+      ctx.moveTo(fx + sgn*4, surf(fx + sgn*6) - 1);
+      ctx.lineTo(fx + sgn*4 + SK.x, surf(fx + sgn*6) + SK.y - 1);
+      ctx.stroke();
     }
   }
   ctx.restore();
-  // 화산: 열곡 사면에서 고정 거리(46px)에 위치 — 열곡이 넓어져도 사면 곁에 유지.
-  // 중앙 상승부 → 좌우 분기 → 화산 아래 연직 통로로 마그마가 공급된 뒤에만 성장.
-  const vxL = xc - w - 46, vxR = xc + w + 46;
-  if(t > 0.28){
-    const by = crustBot(xc) + 14;
-    const bp = phase(t, 0.32, 0.58), ba = phase(t, 0.28, 0.4);
-    magmaConduit(xc-8, by, vxL, surf(vxL)+3, (vxL-(xc-8))/2, bp, ba);
-    magmaConduit(xc+8, by, vxR, surf(vxR)+3, (vxR-(xc+8))/2, bp, ba);
+  // 열곡축 균열 분출: 마그마가 도달하면 축을 따라(앞→뒤) 빛나는 균열선
+  const fissure = phase(t, 0.45, 0.6);
+  if(fissure > 0.05 && state.show.magma){
+    const pul = 0.5+0.5*Math.sin(state.clock*2.6);
+    ctx.save();
+    ctx.strokeStyle = `rgba(255,110,40,${((0.35+0.4*pul)*fissure).toFixed(3)})`;
+    ctx.lineWidth = 3; ctx.setLineDash([9,7]);
+    ctx.beginPath();
+    ctx.moveTo(xc, surf(xc)+1);
+    ctx.lineTo(xc+SK.x, surf(xc)+SK.y+1);
+    ctx.stroke();
+    ctx.restore();
+    if(fissure > 0.4) lavaBits(xc, surf(xc), 8, 14);   // 단면(앞면) 위 균열 분출
   }
-  const vh = 34*phase(t, 0.55, 0.88);
-  volcano(vxL, surf(vxL)+2, vh, 40, {erupting:t>0.65});
-  volcano(vxR, surf(vxR)+2, vh*0.85, 34, {erupting:t>0.72});
-  // 지진: 단층선 근처 천발
-  for(let i=0;i<8;i++){
-    if(t < 0.08) break;
-    const sgn = i%2===0 ? -1 : 1;
-    const fx = xc + sgn*w*(0.35+rnd(i*5)*0.75);
-    drawQuake(fx, surf(fx)+12+rnd(i*3+4)*30, i);
+  // 화산열: 열곡축을 따라 앞뒤(깊이) 방향으로 늘어선 작은 화산들 (뒤 → 앞 순서로)
+  const vGrow = phase(t, 0.55, 0.88);
+  for(const [vz, vs] of [[0.8, 0.7], [0.52, 0.85], [0.24, 1]]){
+    const bx = xc + SK.x*vz, by = surf(xc)+1 + SK.y*vz;
+    volcano(bx, by, 24*vGrow*vs, 26*vs, {erupting: t>0.62 && vz<0.6, color:'#4c4038'});
+  }
+  // 열곡호: 후기 단계에 열곡 바닥을 따라 길게 고인 좁은 호수
+  const lake = phase(t, 0.78, 0.92);
+  if(lake > 0.05){
+    const lw = 15*lake, lx = xc - 52;
+    ctx.fillStyle = 'rgba(59,130,246,0.55)';
+    ctx.beginPath();
+    ctx.moveTo(lx-lw, surf(lx)+1); ctx.lineTo(lx+lw, surf(lx)+1);
+    ctx.lineTo(lx+lw+SK.x, surf(lx)+SK.y+1); ctx.lineTo(lx-lw+SK.x, surf(lx)+SK.y+1);
+    ctx.closePath(); ctx.fill();
+    if(lake > 0.5) label('열곡호(길쭉한 호수, 예: 말라위호)', xc-205, 268, {color:'#9ec5ff', pt:[lx, surf(lx)+SK.y*0.35]});
+  }
+  // 지진: 정단층면 "위"에 집중 (천발) — 마그마(열곡축 아래)와 위치 분리
+  if(t > 0.12){
+    for(let i=0;i<6;i++){
+      const sgn = i%2===0 ? -1 : 1;
+      const s = 1 + (i>>1)%3;                       // 단층 1~3단
+      const fx = xc + sgn*w*s/3;
+      const q = 0.25 + rnd(i*7+3)*0.65;             // 단층면 위의 위치
+      const qx = lerp(fx+sgn*10, fx-sgn*16, q);
+      const qy = lerp(surf(fx+sgn*3)-4, surf(fx-sgn*3)+42, q);
+      drawQuake(qx, qy, i);
+    }
   }
   plateArrow(xc-210, 0.45, -1, 0, '#4ade80', 76, surf(xc-210)-32);
   plateArrow(xc+210, 0.45,  1, 0, '#4ade80', 76, surf(xc+210)-32);
@@ -1196,6 +1226,21 @@ rngSpeed.addEventListener('input', () => {
 $('rngView').addEventListener('input', e => {   // 카메라 시점(피치) 조절
   VIEW.v = e.target.value/100;
 });
+// 캔버스를 위·아래로 드래그해도 시점(피치)이 바뀜 — 회전은 없음
+let viewDragY = null;
+cv.addEventListener('pointerdown', e => {
+  viewDragY = e.clientY;
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', e => {
+  if(viewDragY === null) return;
+  const dy = e.clientY - viewDragY; viewDragY = e.clientY;
+  VIEW.v = clamp(VIEW.v - dy*0.0042, 0, 1);   // 위로 드래그 = 내려다보기
+  $('rngView').value = VIEW.v*100;
+});
+const endViewDrag = () => { viewDragY = null; };
+cv.addEventListener('pointerup', endViewDrag);
+cv.addEventListener('pointercancel', endViewDrag);
 $('chkQuake').addEventListener('change', e => state.show.quake = e.target.checked);
 $('chkMagma').addEventListener('change', e => state.show.magma = e.target.checked);
 $('chkConv').addEventListener('change', e => state.show.conv = e.target.checked);
