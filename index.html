@@ -101,6 +101,11 @@ footer{margin-top:22px;text-align:center;color:#5b6a85;font-size:12px;line-heigh
           <span class="val" id="valSpeed">1.0×</span>
         </div>
         <div class="grp">
+          <label for="rngView">시점</label>
+          <input type="range" id="rngView" min="0" max="100" value="52" style="width:100px"
+                 title="왼쪽: 단면 위주 · 오른쪽: 표면(윗면) 위주">
+        </div>
+        <div class="grp">
           <label><input type="checkbox" id="chkQuake" checked>지진</label>
           <label><input type="checkbox" id="chkMagma" checked>마그마·화산</label>
           <label><input type="checkbox" id="chkConv" checked>맨틀 대류</label>
@@ -115,7 +120,7 @@ footer{margin-top:22px;text-align:center;color:#5b6a85;font-size:12px;line-heigh
         <span class="chip"><span class="dot" style="background:#f87171;color:#f87171"></span>수렴(가까워짐)</span>
         <span class="chip"><span class="dot" style="background:#facc15;color:#facc15"></span>보존(어긋남)</span>
       </div>
-      <p class="keys"><kbd>◀</kbd><kbd>▶</kbd> 경계 전환 &nbsp;·&nbsp; <kbd>Space</kbd> 재생/정지</p>
+      <p class="keys"><kbd>◀</kbd><kbd>▶</kbd> 경계 전환 &nbsp;·&nbsp; <kbd>Space</kbd> 재생/정지 &nbsp;·&nbsp; 시점 슬라이더로 단면↔표면 기울기 조절</p>
     </section>
 
     <aside>
@@ -257,6 +262,7 @@ function rnd(i){ const s = Math.sin(i*127.1 + 13.7) * 43758.545; return s - Math
 function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
 function lerp(a,b,u){ return a + (b-a)*u; }
 function smooth(u){ u = clamp(u,0,1); return u*u*(3-2*u); }
+function phase(t,a,b){ return smooth((t-a)/(b-a)); }   // 구간 [a,b]의 진행률(0~1)
 function gauss(x, c, w){ const d = (x-c)/w; return Math.exp(-d*d); }
 function bez(p0,p1,p2,u){ const a=1-u; return {
   x: a*a*p0.x + 2*a*u*p1.x + u*u*p2.x,
@@ -469,22 +475,33 @@ function volcano(x, baseY, h, w, opt={}){
     }
   }
 }
-/* ---- 마그마 상승 통로 ---- */
-function magmaConduit(x0, y0, x1, y1, bend=30){
-  if(!state.show.magma) return;
-  const mx = (x0+x1)/2 + bend, my = (y0+y1)/2;
-  // 근원 마그마 방울(맥동)
+/* ---- 마그마 상승 통로 ----
+   prog: 통로가 자란 정도(0~1, 근원→끝점), srcA: 근원 마그마의 등장 정도(0~1) */
+function magmaConduit(x0, y0, x1, y1, bend=30, prog=1, srcA=1){
+  if(!state.show.magma || srcA <= 0.02) return;
+  const P0 = {x:x0,y:y0}, P1 = {x:(x0+x1)/2+bend, y:(y0+y1)/2}, P2 = {x:x1,y:y1};
+  // 근원 마그마 방울(맥동, 서서히 등장)
   const pul = 0.5+0.5*Math.sin(state.clock*2.2);
-  ctx.fillStyle = `rgba(255,90,30,${0.55+0.3*pul})`;
-  ctx.beginPath(); ctx.ellipse(x0, y0, 13+3*pul, 9+2*pul, 0, 0, Math.PI*2); ctx.fill();
-  // 통로
+  ctx.fillStyle = `rgba(255,90,30,${((0.55+0.3*pul)*srcA).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.ellipse(x0, y0, (13+3*pul)*(0.4+0.6*srcA), (9+2*pul)*(0.4+0.6*srcA), 0, 0, Math.PI*2);
+  ctx.fill();
+  if(prog <= 0.02) return;
+  // 통로: 진행률만큼만 자람
   ctx.strokeStyle = 'rgba(255,110,40,0.5)'; ctx.lineWidth = 5; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(x0,y0); ctx.quadraticCurveTo(mx,my,x1,y1); ctx.stroke();
-  ctx.lineCap='butt';
+  ctx.beginPath(); ctx.moveTo(x0,y0);
+  for(let u=0.05; u<prog; u+=0.05){ const q = bez(P0,P1,P2,u); ctx.lineTo(q.x,q.y); }
+  const tip = bez(P0,P1,P2,prog); ctx.lineTo(tip.x,tip.y);
+  ctx.stroke(); ctx.lineCap='butt';
+  // 아직 다 오르지 못한 통로의 선단 글로우
+  if(prog < 0.999){
+    ctx.fillStyle = `rgba(255,140,50,${0.45+0.3*pul})`;
+    ctx.beginPath(); ctx.arc(tip.x, tip.y, 5+2*pul, 0, Math.PI*2); ctx.fill();
+  }
   // 상승 방울
   for(let i=0;i<4;i++){
-    const p = (state.clock*0.28 + i/4) % 1;
-    const q = bez({x:x0,y:y0},{x:mx,y:my},{x:x1,y:y1}, p);
+    const p = ((state.clock*0.28 + i/4) % 1) * prog;
+    const q = bez(P0,P1,P2,p);
     ctx.fillStyle = `rgba(255,${140-Math.floor(p*60)},50,${0.9-p*0.3})`;
     ctx.beginPath(); ctx.arc(q.x, q.y, 4.5-p*1.5, 0, Math.PI*2); ctx.fill();
   }
@@ -550,7 +567,7 @@ const C = {
 /* ===================== 1. 발산형 — 해령 (동태평양 해령) ===================== */
 function sceneRidge(t){
   const xc = 450;
-  const grow = 0.35 + 0.65*smooth(Math.min(1, t*1.6));
+  const grow = 0.35 + 0.65*phase(t, 0.05, 0.42);   // 해령 발달: 상승류 시작 후
   const surf = x => {
     const dx = Math.abs(x-xc);
     return 344 - (60*gauss(dx,0,150) - 21*gauss(dx,0,24))*grow;
@@ -561,15 +578,16 @@ function sceneRidge(t){
   // 맨틀 & 대류(닫힌 고리: 상승→수평→하강→상승)
   mantleFill(lithoBot);
   upwellGlow(xc, surf(xc)+18, YBOT);
-  convCell(xc-178, 462, 152, 74, -1);  // 왼쪽 세포: 위쪽 흐름이 왼쪽으로
-  convCell(xc+178, 462, 152, 74, +1);  // 오른쪽 세포: 위쪽 흐름이 오른쪽으로
+  convCell(xc-192, 494, 158, 42, -1);  // 왼쪽 세포(납작·깊게): 위쪽 흐름이 왼쪽으로
+  convCell(xc+192, 494, 158, 42, +1);  // 오른쪽 세포: 판 하부와 여백을 두고 순환
   // 판(암석권)
   fillBetween(crustBot, lithoBot, C.litho);
   fillBetween(surf, crustBot, C.oceanCrust);
-  // 해령 마그마 통로
-  if(state.show.magma){
+  // 해령 마그마 통로 (상승류가 자리 잡은 뒤 등장)
+  if(state.show.magma && t > 0.18){
     const pul = 0.5+0.5*Math.sin(state.clock*2.4);
-    ctx.fillStyle = `rgba(255,96,32,${0.5+0.3*pul})`;
+    const mp = phase(t, 0.18, 0.32);
+    ctx.fillStyle = `rgba(255,96,32,${((0.5+0.3*pul)*mp).toFixed(3)})`;
     ctx.beginPath();
     ctx.moveTo(xc-16, lithoBot(xc)+26);
     ctx.quadraticCurveTo(xc-7, (surf(xc)+lithoBot(xc))/2, xc-6, surf(xc)+2);
@@ -578,7 +596,7 @@ function sceneRidge(t){
     ctx.closePath(); ctx.fill();
   }
   // 윗면: 나이 줄무늬 (해령에서 생성되어 양옆으로 이동)
-  const bandW = 30, spread = t*265;
+  const bandW = 30, spread = 265*phase(t, 0.2, 1);   // 새 지각: 마그마 공급 이후 생성
   topFace(surf, x => {
     const d = Math.abs(x-xc);
     if(d >= spread) return C.oldFloor;
@@ -592,8 +610,8 @@ function sceneRidge(t){
     {y0:lithoBot(X1), y1:YBOT, c:'#8a3812'},
   ]);
   blockEdges(surf);
-  // 해령 꼭대기 분출(수중)
-  if(state.show.magma){
+  // 해령 꼭대기 분출(수중) — 마그마가 지표에 도달한 뒤
+  if(state.show.magma && t > 0.32){
     ctx.fillStyle = 'rgba(255,90,30,0.9)';
     ctx.beginPath(); ctx.ellipse(xc, surf(xc)+1, 8, 3, 0, 0, Math.PI*2); ctx.fill();
     lavaBits(xc, surf(xc), 10, 16);
@@ -615,20 +633,20 @@ function sceneRidge(t){
   // 이름표
   label('동태평양 해령', xc, 178, {bold:true, size:14, pt:[xc, surf(xc)-8]});
   label('열곡(V자 골짜기)', xc+150, 236, {pt:[xc+8, surf(xc)-2]});
-  label('새 해양 지각 생성 → 양쪽으로 이동', xc, 306, {color:'#a7f3c9'});
+  if(t > 0.25) label('새 해양 지각 생성 → 양쪽으로 이동', xc, 306, {color:'#a7f3c9'});
   if(spread > bandW*2){
     label('나이 줄무늬: 해령에서 멀수록 오래된 지각', xc, VH-28, {size:12, color:'#8fd19a'});
   }
   if(state.show.conv){
     label('맨틀 대류 상승 ↑', xc, 470, {color:'#ffc480'});
-    label('하강 ↓', X0+52, 462, {color:'#ffc480', size:11.5});
-    label('하강 ↓', X1-50, 462, {color:'#ffc480', size:11.5});
+    label('하강 ↓', X0+52, 502, {color:'#ffc480', size:11.5});
+    label('하강 ↓', X1-50, 502, {color:'#ffc480', size:11.5});
   }
 }
 
 /* ===================== 2. 발산형 — 열곡대 (동아프리카) ===================== */
 function sceneRift(t){
-  const xc = 450, w = 78 + t*225, dp = 8 + t*60;
+  const xc = 450, w = 70 + 160*phase(t, 0.08, 0.45), dp = 8 + 60*phase(t, 0.08, 0.5);
   const surf = x => {
     const dx = Math.abs(x-xc);
     if(dx >= w) return 233 - 11*gauss(dx, w+46, 95);   // 살짝 솟은 열곡 어깨
@@ -636,23 +654,23 @@ function sceneRift(t){
     const step = Math.ceil(u*3)/3;                      // 계단(정단층 3단)
     return 233 + dp*step - 3*gauss(dx, 0, w*0.2);
   };
-  const crustBot = x => 402 - 74*smooth(t)*gauss(x, xc, w*1.7);
+  const crustBot = x => 402 - 74*phase(t, 0.15, 0.6)*gauss(x, xc, w*1.7);
   const lithoBot = x => crustBot(x) + 26;
 
   mantleFill(lithoBot);
   upwellGlow(xc, crustBot(xc)+18, YBOT);
-  convCell(xc-185, 468, 155, 70, -1);
-  convCell(xc+185, 468, 155, 70, +1);
+  convCell(xc-198, 504, 158, 38, -1);   // 납작한 순환 셀: 두꺼운 대륙판 아래 깊은 곳
+  convCell(xc+198, 504, 158, 38, +1);
   fillBetween(crustBot, lithoBot, C.litho);
   fillBetween(surf, crustBot, C.contCrust);
   // 골짜기 바닥의 새 현무암질 지각 (오개념 포인트!)
-  const bw = Math.max(0, t-0.5)*150;
+  const bw = 140*phase(t, 0.5, 0.95);   // 마그마가 바닥에 도달한 뒤 생성
   if(bw > 2){
     fillBetween(surf, x=>surf(x)+13, '#3b4d5c', xc-bw, xc+bw);
   }
-  // 마그마 상승(골짜기 바닥으로)
-  if(state.show.magma && t > 0.18){
-    magmaConduit(xc, crustBot(xc)+30, xc, surf(xc)+6, 10);
+  // 마그마 상승(골짜기 바닥으로): 중앙 상승부 통로가 지표로 자람
+  if(t > 0.14){
+    magmaConduit(xc, crustBot(xc)+30, xc, surf(xc)+6, 6, phase(t, 0.22, 0.5), phase(t, 0.14, 0.26));
   }
   topFace(surf, x => {
     const dx = Math.abs(x-xc);
@@ -679,10 +697,18 @@ function sceneRift(t){
     }
   }
   ctx.restore();
-  // 화산(열곡 어깨) — 킬리만자로처럼
-  const vh = 34*smooth((t-0.22)/0.5);
-  volcano(xc-w-52, surf(xc-w-52)+2, vh, 40, {erupting:t>0.4});
-  volcano(xc+w+58, surf(xc+w+58)+2, vh*0.8, 34, {erupting:t>0.55});
+  // 화산: 열곡 사면에서 고정 거리(46px)에 위치 — 열곡이 넓어져도 사면 곁에 유지.
+  // 중앙 상승부 → 좌우 분기 → 화산 아래 연직 통로로 마그마가 공급된 뒤에만 성장.
+  const vxL = xc - w - 46, vxR = xc + w + 46;
+  if(t > 0.28){
+    const by = crustBot(xc) + 14;
+    const bp = phase(t, 0.32, 0.58), ba = phase(t, 0.28, 0.4);
+    magmaConduit(xc-8, by, vxL, surf(vxL)+3, (vxL-(xc-8))/2, bp, ba);
+    magmaConduit(xc+8, by, vxR, surf(vxR)+3, (vxR-(xc+8))/2, bp, ba);
+  }
+  const vh = 34*phase(t, 0.55, 0.88);
+  volcano(vxL, surf(vxL)+2, vh, 40, {erupting:t>0.65});
+  volcano(vxR, surf(vxR)+2, vh*0.85, 34, {erupting:t>0.72});
   // 지진: 단층선 근처 천발
   for(let i=0;i<8;i++){
     if(t < 0.08) break;
@@ -716,7 +742,8 @@ function drawSlab(P0, P1, P2, ulen){
   // 끝부분 이동 방향 화살표
   const pt = bez(P0,P1,P2, ulen), pt2 = bez(P0,P1,P2, Math.max(0,ulen-0.06));
   const ang = Math.atan2(pt.y-pt2.y, pt.x-pt2.x);
-  arrow(pt.x + Math.cos(ang)*16, pt.y + Math.sin(ang)*16, ang, 34, 'rgba(255,170,120,0.9)', 5);
+  const ax = pt.x + Math.cos(ang)*16, ay = pt.y + Math.sin(ang)*16;
+  if(ay < YBOT-8) arrow(ax, ay, ang, 34, 'rgba(255,170,120,0.9)', 5);   // 블록 안에서만
   ctx.restore();
 }
 function benioff(P0, P1, P2, ulen, n=24){
@@ -736,31 +763,31 @@ function benioff(P0, P1, P2, ulen, n=24){
 /* ===================== 3. 수렴형 — 해양판+대륙판 (안데스) ===================== */
 function sceneOC(t){
   const xt = 385, xm = xt+245, xv = xt+195;   // 해구, 산맥 중심, 화산
-  const mh = 90*smooth(t);                     // 산맥 높이
+  const mh = 90*phase(t, 0.3, 0.92);           // 산맥 높이: 수렴이 진행된 뒤 성장
   const surf = x => {
-    if(x < xt) return 334 + 48*gauss(x, xt, 34)*(0.4+0.6*smooth(t*1.5));
+    if(x < xt) return 334 + 48*gauss(x, xt, 34)*(0.3+0.7*phase(t,0.1,0.5));
     const rise = smooth((x-xt)/95);
-    let y = lerp(334 + 48*(0.4+0.6*smooth(t*1.5)), 237, rise);
+    let y = lerp(334 + 48*(0.3+0.7*phase(t,0.1,0.5)), 237, rise);
     y -= mh*gauss(x, xm, 108);
-    y -= 7*Math.sin(x*0.11)*smooth(t)*gauss(x, xm, 135);
+    y -= 7*Math.sin(x*0.11)*phase(t, 0.3, 0.92)*gauss(x, xm, 135);
     return y;
   };
-  const crustBot = x => x < xt ? surf(x)+15 : 404 + 46*smooth(t)*gauss(x, xm, 115);
+  const crustBot = x => x < xt ? surf(x)+15 : 404 + 46*phase(t, 0.35, 0.95)*gauss(x, xm, 115);
   const lithoBot = x => crustBot(x) + (x < xt ? 42 : 30);
   const P0 = {x:xt, y:352}, P1 = {x:xt+150, y:405}, P2 = {x:xt+345, y:545};
-  const ulen = 0.3 + 0.7*t;
+  const ulen = lerp(0.12, 1, phase(t, 0.08, 0.62));   // 섭입 진행
 
   mantleFill(lithoBot);
   // 대류: 양쪽 세포의 흐름이 해구 밑에서 함께 하강 (판은 그 위에 얹혀 이동)
-  convCell(xt-215, 466, 175, 74, +1);   // 해양판 밑: 위쪽 흐름 →, 해구에서 하강
+  convCell(xt-215, 482, 175, 56, +1);   // 해양판 밑: 위쪽 흐름 →, 해구에서 하강
   convCell(xt+310, 497, 160, 48, -1);   // 대륙판 밑: 위쪽 흐름 ←, 해구에서 하강
   drawSlab(P0, P1, P2, ulen);
   fillBetween(crustBot, lithoBot, C.litho);
   fillBetween(surf, crustBot, C.oceanCrust, X0, xt);
   fillBetween(surf, crustBot, C.contCrust, xt, X1);
-  // 마그마: 슬랩 위(깊이 약 100km)에서 생성 → 대륙 화산으로
-  if(state.show.magma && t > 0.3){
-    magmaConduit(xt+190, 452, xv, surf(xv)+4, 26);
+  // 마그마: 섭입판 위 맨틀 쐐기(깊이 약 100km)에서 생성 → 연직에 가깝게 상승
+  if(t > 0.32){
+    magmaConduit(xt+190, 430, xv, surf(xv)+4, 14, phase(t, 0.5, 0.78), phase(t, 0.35, 0.5));
   }
   topFace(surf, x => {
     if(x < xt) return '#4b5c66';
@@ -775,8 +802,9 @@ function sceneOC(t){
     {y0:lithoBot(X1), y1:YBOT, c:'#8a3812'},
   ]);
   blockEdges(surf);
-  // 육상 화산(화산대) — 대륙 안쪽!
-  volcano(xv, surf(xv)+6, 34+mh*0.25, 34, {erupting: t>0.42, color:'#6b4a35'});
+  // 육상 화산(화산대) — 대륙 안쪽! 마그마 통로 끝(xv) 바로 위에서, 지표 도달 후에만 성장
+  const vg = phase(t, 0.72, 0.97);
+  volcano(xv, surf(xv)+6, (34+mh*0.25)*vg, 34*(0.45+0.55*vg), {erupting: t>0.84, color:'#6b4a35'});
   drawWater(surf, X0, xt+95);
   benioff(P0, P1, P2, ulen);
   plateArrow(190, 0.45,  1, 0, '#f87171', 80, SEA-42);
@@ -785,7 +813,7 @@ function sceneOC(t){
   label('대륙판 (가볍다)', 760, surf(760)+42, {size:12});
   label('페루-칠레 해구', xt-60, 300, {bold:true, pt:[xt, surf(xt)+2]});
   if(mh > 20) label('안데스산맥(습곡 산맥) — 경계보다 대륙 안쪽!', xm+40, 128, {bold:true, size:13, pt:[xm, surf(xm)]});
-  if(t > 0.3 && state.show.magma) label('마그마: 현무암질 → 안산암질~유문암질', xv+120, 400, {color:'#ffb27a', pt:[xt+190, 448]});
+  if(t > 0.45 && state.show.magma) label('마그마: 현무암질 → 안산암질~유문암질', xv+120, 400, {color:'#ffb27a', pt:[xt+190, 426]});
   if(ulen > 0.5 && state.show.quake) label('베니오프대: 대륙 쪽으로 갈수록 진원 깊어짐', 620, 520, {color:'#ffd76e', pt:[bez(P0,P1,P2,0.6).x, bez(P0,P1,P2,0.6).y]});
   if(state.show.conv) label('맨틀 대류 하강 ↓', xt+40, 555, {color:'#ffc480'});
 }
@@ -793,7 +821,7 @@ function sceneOC(t){
 /* ===================== 4. 수렴형 — 해양판+해양판 (마리아나·호상열도) ===================== */
 function sceneOO(t){
   const xt = 430, xa = xt+175;                 // 해구, 호상열도 중심
-  const trench = 66*(0.4+0.6*smooth(t*1.5));
+  const trench = 66*(0.3+0.7*phase(t,0.1,0.5));
   const surf = x => {
     const base = x < xt ? 334 : 330;
     return base + trench*gauss(x, xt, 30);
@@ -801,18 +829,18 @@ function sceneOO(t){
   const crustBot = x => surf(x)+15;
   const lithoBot = x => crustBot(x) + (x < xt ? 46 : 34);
   const P0 = {x:xt, y:352}, P1 = {x:xt+95, y:420}, P2 = {x:xt+215, y:548};
-  const ulen = 0.3 + 0.7*t;
+  const ulen = lerp(0.12, 1, phase(t, 0.06, 0.55));   // 섭입 진행
 
   mantleFill(lithoBot);
-  convCell(xt-225, 466, 180, 74, +1);
-  convCell(xt+245, 474, 160, 66, -1);
+  convCell(xt-225, 480, 180, 58, +1);
+  convCell(xt+245, 484, 160, 52, -1);
   drawSlab(P0, P1, P2, ulen);
   fillBetween(crustBot, lithoBot, C.litho);
   fillBetween(surf, crustBot, C.oceanCrust);
-  // 해저 화산 성장 → 호상열도
-  const vh = 100*smooth((t-0.12)/0.75);
-  if(state.show.magma && t > 0.2){
-    magmaConduit(xt+130, 455, xa, surf(xa)-vh*0.4, 20);
+  // 순서: 섭입 → 맨틀 쐐기에서 마그마 생성 → "연직" 상승 → 해저 화산 성장 → 섬 출현
+  const vh = 105*phase(t, 0.68, 0.97);
+  if(t > 0.34){
+    magmaConduit(xa, 462, xa, surf(xa)+2, 0, phase(t, 0.5, 0.74), phase(t, 0.36, 0.5));
   }
   topFace(surf, x => x < xt ? '#3f4f59' : '#51636f');
   sideFace([
@@ -822,45 +850,57 @@ function sceneOO(t){
     {y0:lithoBot(X1), y1:YBOT, c:'#8a3812'},
   ]);
   blockEdges(surf);
-  // 화산섬들 (물보다 먼저 그리면 잠긴 부분이 물빛으로 보임)
-  const cones = [[xa, 1], [xa+72, 0.72], [xa+138, 0.5]];
-  for(let ci=0; ci<cones.length; ci++){
-    const [cx, s] = cones[ci];
-    const h = vh*s, baseY = surf(cx)+4, topY = baseY-h;
-    volcano(cx, baseY, h, 30+18*s, {erupting: t>0.35 && state.show.magma? true:false, underwater: topY > SEA-2, color:'#54423a'});
-    if(topY < SEA-2){ // 바다 위로 솟은 섬: 초록 봉우리
-      ctx.fillStyle = '#5f7a45';
-      ctx.beginPath(); ctx.ellipse(cx, topY+3, 9+5*s, 3, 0, 0, Math.PI*2); ctx.fill();
-    }
-  }
+  // 대표 화산섬 1개: 마그마 통로(xa) 바로 위에서 성장 (물보다 먼저 그리면 잠긴 부분이 물빛)
+  const vBaseY = surf(xa)+4, vTopY = vBaseY - vh;
+  volcano(xa, vBaseY, vh, 46, {erupting: t>0.8 && vTopY >= SEA-2, underwater: true, color:'#54423a'});
   drawWater(surf);
+  if(vh > 2 && vTopY < SEA-2){
+    // 수면 위로 솟은 부분은 물 그리기 뒤에 다시 그려서 '섬'으로 보이게
+    ctx.save();
+    ctx.beginPath(); ctx.rect(xa-72, vTopY-96, 144, (SEA-1)-(vTopY-96)); ctx.clip();
+    volcano(xa, vBaseY, vh, 46, {erupting: t>0.8, underwater: false, color:'#54423a'});
+    ctx.fillStyle = '#5f7a45';
+    ctx.beginPath(); ctx.ellipse(xa, vTopY+3, 13, 3.2, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
   benioff(P0, P1, P2, ulen, 26);
   plateArrow(210, 0.45,  1, 0, '#f87171', 80, SEA-42);
   plateArrow(770, 0.45, -1, 0, '#f87171', 80, SEA-42);
   label('오래된 해양판 (차갑고 무겁다 → 섭입)', 205, SEA+52, {size:12});
   label('젊은 해양판', 762, SEA+52, {size:12});
   label('마리아나 해구 — 수심 약 11km, 세계에서 가장 깊음', xt-90, 452, {bold:true, pt:[xt, surf(xt)]});
-  const topIsland = surf(xa)+4-vh;
+  const topIsland = vTopY;
   if(topIsland < SEA-2) label('호상열도 탄생! (예: 일본 열도)', xa+60, 196, {bold:true, size:13, color:'#ffd76e', pt:[xa, topIsland]});
-  else if(t > 0.25) label('해저 화산이 자라는 중…', xa+40, 332, {pt:[xa, topIsland]});
+  else if(vh > 4) label('해저 화산이 자라는 중…', xa+40, 332, {pt:[xa, topIsland]});
+  if(t > 0.42 && state.show.magma) label('맨틀 쐐기: 물 공급 → 마그마 생성', xa+158, 470, {color:'#ffb27a', size:11.5, pt:[xa+12, 462]});
   if(ulen > 0.5 && state.show.quake) label('베니오프대', 640, 535, {color:'#ffd76e', pt:[bez(P0,P1,P2,0.65).x, bez(P0,P1,P2,0.65).y]});
   if(state.show.conv) label('맨틀 대류 하강 ↓', xt-10, 560, {color:'#ffc480'});
 }
 
 /* ===================== 5. 수렴형 — 대륙판+대륙판 (히말라야) ===================== */
 function sceneCC(t){
-  const xc = 460, mw = 150 + 62*t, mh = 120*smooth(t);
+  const xc = 460;
+  const appr = phase(t, 0, 0.24);        // 1단계: 두 대륙 접근(사이의 옛 바다가 닫힘)
+  const cp   = phase(t, 0.24, 0.95);     // 2단계: 충돌 — 압축·습곡·융기
+  const gap  = 52*(1-appr);              // 남은 바다(테티스해)의 반폭
+  const mw = 150 + 62*cp, mh = 120*cp;
   const surf = x => {
-    let y = 244 - mh*gauss(x, xc, mw);
-    y -= 11*Math.abs(Math.sin(x*0.09))*smooth(t)*gauss(x, xc, mw*1.2);
+    const dx = Math.abs(x-xc);
+    let y = 244;
+    if(gap > 1) y += 62*gauss(dx, 0, gap*0.9);   // 닫히는 바다(분지)
+    y -= mh*gauss(dx, 0, mw);
+    y -= 11*Math.abs(Math.sin(x*0.09))*cp*gauss(dx, 0, mw*1.2);
     return y;
   };
-  const crustBot = x => 402 + 100*smooth(t)*gauss(x, xc, mw*1.3);
+  const crustBot = x => 402 + 100*cp*gauss(x, xc, mw*1.3);
   const lithoBot = x => crustBot(x) + 26;
+  // 수평 압축(지각 단축): 먼 곳의 물질은 중앙으로 전진, 충돌대 부근은 정체 → 물질이 밀집
+  const adv = 26*appr + 36*cp;
+  const squeeze = s => s + (s < xc ? 1 : -1) * adv * (1 - gauss(s, xc, 230));
 
   mantleFill(lithoBot);
-  convCell(xc-240, 486, 172, 60, +1);   // 왼쪽: 위 흐름 → (오른쪽으로)
-  convCell(xc+240, 486, 172, 60, -1);   // 오른쪽: 위 흐름 ← / 충돌부 아래서 함께 하강
+  convCell(xc-245, 500, 170, 42, +1);   // 왼쪽: 위 흐름 → (오른쪽으로)
+  convCell(xc+245, 500, 170, 42, -1);   // 오른쪽: 위 흐름 ← / 충돌부 아래서 함께 하강
   fillBetween(crustBot, lithoBot, C.litho);
   fillBetween(surf, crustBot, '#8a6d3b', X0, xc+6);
   fillBetween(surf, crustBot, '#957850', xc-6, X1);
@@ -871,29 +911,43 @@ function sceneCC(t){
   for(let x=X0+5;x<=X1;x+=5) ctx.lineTo(x, surf(x));
   for(let x=X1;x>=X0;x-=5) ctx.lineTo(x, crustBot(x));
   ctx.closePath(); ctx.clip();
-  const fold = 15*smooth(t);
+  const fold = 15*phase(t, 0.32, 0.8);
   for(let kf=0; kf<4; kf++){
     const f = 0.22 + kf*0.2;
     ctx.strokeStyle = kf%2===0 ? 'rgba(90,70,40,0.85)' : 'rgba(120,95,55,0.85)';
     ctx.lineWidth = 2.4;
     ctx.beginPath();
-    for(let x=X0; x<=X1; x+=5){
+    let first = true;
+    for(let s=X0-42; s<=X1+42; s+=5){    // 물질 좌표 s → 압축된 화면 좌표(중앙으로 밀집)
+      const x = squeeze(s);
+      if(x < X0-6 || x > X1+6) continue;
       const y = lerp(surf(x), crustBot(x), f)
-              + fold*Math.sin((x-xc)/26)*gauss(x, xc, mw*1.35);
-      x===X0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+              + fold*Math.sin((s-xc)/26)*gauss(x, xc, mw*1.35);
+      first ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+      first = false;
     }
     ctx.stroke();
   }
+  // 세로 기준선: 중앙으로 갈수록 간격이 좁아짐 = 지각의 수평 단축이 눈에 보임
+  ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 1.2;
+  for(let k=-6; k<=6; k++){
+    if(k===0) continue;
+    const x = squeeze(xc + k*58);
+    ctx.beginPath(); ctx.moveTo(x, surf(x)+3); ctx.lineTo(x, crustBot(x)-3); ctx.stroke();
+  }
   ctx.restore();
-  // 봉합대(두 판이 만난 자리)
-  ctx.save(); ctx.setLineDash([5,5]);
-  ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.moveTo(xc, surf(xc)+4);
-  ctx.quadraticCurveTo(xc-18, (surf(xc)+crustBot(xc))/2, xc+6, crustBot(xc)-4);
-  ctx.stroke(); ctx.restore();
+  // 봉합대(두 판이 만난 자리) — 충돌이 시작된 뒤에만
+  if(gap <= 2){
+    ctx.save(); ctx.setLineDash([5,5]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(xc, surf(xc)+4);
+    ctx.quadraticCurveTo(xc-18, (surf(xc)+crustBot(xc))/2, xc+6, crustBot(xc)-4);
+    ctx.stroke(); ctx.restore();
+  }
   topFace(surf, x => {
     const y = surf(x);
+    if(y > SEA) return '#46586a';        // 닫히는 옛 바다의 바닥
     if(y < 150) return '#e3e8ee';        // 만년설
     if(y < 200) return '#8b7d5a';
     return (Math.floor(x/30)%2===0) ? '#5f7a45' : '#587340';
@@ -904,23 +958,25 @@ function sceneCC(t){
     {y0:lithoBot(X1), y1:YBOT, c:'#8a3812'},
   ]);
   blockEdges(surf);
-  // 지진: 천발~중발만, 넓게 분포 (심발 없음!)
+  drawWater(surf);                       // 닫히는 옛 바다(테티스해)
+  // 지진: 천발~중발만, 넓게 분포 (심발 없음!) — 충돌이 시작된 뒤
   for(let i=0;i<10;i++){
-    if(t < 0.1) break;
+    if(t < 0.28) break;
     const qx = xc + (rnd(i*13+2)-0.5)*mw*2.2;
     const qy = surf(qx) + 14 + rnd(i*7+5)*(crustBot(qx)-surf(qx)-24);
     drawQuake(qx, qy, i);
   }
   plateArrow(200, 0.45,  1, 0, '#f87171', 82, surf(200)-34);
   plateArrow(730, 0.45, -1, 0, '#f87171', 82, surf(730)-34);
+  if(gap > 6) label('두 대륙 사이의 옛 바다(테티스해)가 닫히는 중', xc, 206, {color:'#9ec5ff', pt:[xc, 244+50]});
   label('인도판', 200, surf(200)+40, {size:12});
   label('유라시아판', 745, surf(745)+40, {size:12});
   if(mh > 24) label('히말라야산맥 — 세계의 지붕', xc, 96, {bold:true, size:14, pt:[xc, surf(xc)]});
   label('둘 다 가벼운 대륙판: 섭입 없이 충돌! (횡압력)', xc, VH-14, {color:'#fca5a5'});
-  if(t > 0.3){
+  if(t > 0.4){
     label('🌋❌ 화산 거의 없음 (마그마 생성 어려움)', xc+205, 200, {color:'#fca5a5', bold:true});
-    label('지각의 뿌리: 아래로도 두꺼워짐', xc, crustBot(xc)+26, {pt:[xc, crustBot(xc)-8]});
   }
+  if(cp > 0.28) label('지각의 뿌리: 아래로도 두꺼워짐', xc, crustBot(xc)+26, {pt:[xc, crustBot(xc)-8]});
   if(t > 0.45) label('습곡: 지층이 물결처럼 구겨짐', xc-215, 330, {pt:[xc-mw*0.5, lerp(surf(xc-mw*0.5), crustBot(xc-mw*0.5), 0.4)]});
   if(state.show.conv) label('맨틀 대류 하강 ↓', xc, 538, {color:'#ffc480'});
 }
@@ -1110,6 +1166,11 @@ rngTime.addEventListener('input', () => {   // 시간 스크럽: 일시정지하
 rngSpeed.addEventListener('input', () => {
   state.speed = parseFloat(rngSpeed.value);
   valSpeed.textContent = state.speed.toFixed(2).replace(/0$/,'') + '×';
+});
+$('rngView').addEventListener('input', e => {   // 카메라 시점: 블록 기울기(단면 ↔ 표면)
+  const v = e.target.value/100;
+  SK.x = lerp(36, 120, v);
+  SK.y = lerp(-12, -78, v);
 });
 $('chkQuake').addEventListener('change', e => state.show.quake = e.target.checked);
 $('chkMagma').addEventListener('change', e => state.show.magma = e.target.checked);
