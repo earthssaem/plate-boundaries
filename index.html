@@ -895,7 +895,8 @@ function benioff(geo, uT, ulen, n=24){
 function sceneOC(t){
   const xt = 385, xm = 615;                    // 해구, 산맥 중심
   const deepen = 0.55 + 0.45*phase(t, 0.08, 0.5);   // 판이 점점 깊이 휘어 들어감(해구도 함께 발달)
-  const SLB = {x0:X0, y0:336, flat:150, bend:230, dip:0.72, total:500, thick:57, crustTh:15};
+  // thick = 해양 지각(15) + 암석권 맨틀(32): 진한 갈색(암석권 맨틀)이 대륙 쪽과 같은 두께
+  const SLB = {x0:X0, y0:336, flat:150, bend:230, dip:0.72, total:500, thick:47, crustTh:15};
   const geo  = makeSlab(SLB, deepen);          // 현재 섭입판 형상 (해양판 전체와 한 몸)
   const geoF = makeSlab(SLB, 1);               // 완성 형상: 화산 등 고정 위치 계산용
   const wedF = slabAtDepth(geoF, 462);
@@ -911,7 +912,7 @@ function sceneOC(t){
     return y;
   };
   const crustBot = x => x <= xt ? surf(x)+SLB.crustTh : 404 + 46*phase(t, 0.35, 0.95)*gauss(x, xm, 115);
-  const lithoBot = x => x <= xt ? surf(x)+SLB.thick : crustBot(x)+30;
+  const lithoBot = x => x <= xt ? surf(x)+SLB.thick : crustBot(x)+32;   // 암석권 맨틀: 양쪽 같은 두께
   const uT = slabUatX(geo, xt);                // 해구 위치의 곡선 파라미터
   const ulen = lerp(uT+0.04, 1, phase(t, 0.08, 0.62));   // 섭입 진행
   // 마그마 근원: 섭입판 "위쪽" 맨틀 쐐기 속 (윗면에서 법선 방향으로 띄움)
@@ -947,6 +948,10 @@ function sceneOC(t){
   plateArrow(745, 0.45, -1, 0, '#f87171', 80, surf(745)-40);
   label('나스카판(해양판): 밀도가 커서 섭입', 185, SEA+56, {size:12});
   label('남아메리카판(대륙판)', 760, surf(760)+42, {size:12});
+  // 층 구분: 대륙 지각 ≫ 해양 지각, 암석권 맨틀(진한 갈색)은 양쪽 비슷한 두께
+  label('해양 지각: 얇음', 150, 400, {size:11.5, pt:[150, 344]});
+  label('암석권 맨틀', 290, 442, {size:11.5, pt:[290, slabYat(geo,290)+31]});
+  label('대륙 지각: 두꺼움', 700, 360, {size:11.5});
   label('페루-칠레 해구', xt-60, 300, {bold:true, pt:[xt, surf(xt)+2]});
   if(mh > 20) label('안데스산맥(습곡 산맥) — 경계보다 대륙 안쪽!', xm+40, 128, {bold:true, size:13, pt:[xm, surf(xm)]});
   if(t > 0.45 && state.show.magma) label('맨틀 쐐기(섭입판 위)에서 마그마 생성 → 상승', xv+140, 400, {color:'#ffb27a', pt:[srcX, srcY]});
