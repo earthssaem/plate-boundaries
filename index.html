@@ -92,6 +92,10 @@ footer{margin-top:22px;text-align:center;color:#5b6a85;font-size:12px;line-heigh
           <button class="ctl" id="btnReset" title="처음부터">⟲ 처음부터</button>
         </div>
         <div class="grp">
+          <button class="ctl" id="btnFront" title="낮은 시점 — 단면 위주로 보기 (↓)">단면 보기</button>
+          <button class="ctl" id="btnTop" title="높은 시점 — 윗면까지 함께 보기 (↑)">입체 보기</button>
+        </div>
+        <div class="grp">
           <label for="rngTime">시간</label>
           <input type="range" id="rngTime" min="0" max="100" step="0.1" value="0">
           <span class="val" id="valTime">0%</span>
@@ -116,7 +120,7 @@ footer{margin-top:22px;text-align:center;color:#5b6a85;font-size:12px;line-heigh
         <span class="chip"><span class="dot" style="background:#f87171;color:#f87171"></span>수렴(가까워짐)</span>
         <span class="chip"><span class="dot" style="background:#facc15;color:#facc15"></span>보존(어긋남)</span>
       </div>
-      <p class="keys"><kbd>◀</kbd><kbd>▶</kbd> 경계 전환 &nbsp;·&nbsp; <kbd>Space</kbd> 재생/정지 &nbsp;·&nbsp; 🖱️ 휠·드래그 ↕ 시점을 위·아래로 조절 (앞쪽 방향 고정) &nbsp;·&nbsp; 더블클릭: 기본 시점</p>
+      <p class="keys"><kbd>◀</kbd><kbd>▶</kbd> 경계 전환 &nbsp;·&nbsp; <kbd>Space</kbd> 재생/정지 &nbsp;·&nbsp; 🖱️ 휠·드래그 ↕ / <kbd>↑</kbd><kbd>↓</kbd> 시점을 위·아래로 조절 (앞쪽 방향 고정) &nbsp;·&nbsp; 더블클릭: 기본 시점</p>
     </section>
 
     <aside>
@@ -255,10 +259,11 @@ const state = {
 // 카메라: 방위각(azimuth)은 고정, 상하 시점(elevation)만 마우스 휠/세로 드래그로 조절
 const DEG2RAD = Math.PI/180;
 const CAM = {
-  elev: 26*DEG2RAD, def: 26*DEG2RAD,
+  elev: 26*DEG2RAD, target: 26*DEG2RAD, def: 26*DEG2RAD,   // elev는 target을 향해 부드럽게 이동
   min: 8*DEG2RAD, max: 55*DEG2RAD,     // 최소: 단면이 잘 보이는 낮은 사선 ~ 최대: 윗면까지 보이는 높은 사선
-  hint: 1, used: false,                // 캔버스 위 조작 안내 (조작을 시작하면 서서히 사라짐)
+  hint: 1, hintAge: 0, everUsed: false,   // 캔버스 위 조작 안내 (조작하거나 시간이 지나면 사라짐)
 };
+const COARSE_PTR = window.matchMedia && matchMedia('(pointer: coarse)').matches;   // 터치 기기 여부
 const DURATION = 14;                   // 속도 1일 때 한 사이클(초)
 
 function rnd(i){ const s = Math.sin(i*127.1 + 13.7) * 43758.545; return s - Math.floor(s); }
@@ -428,12 +433,16 @@ function upwellGlow(x, yTop, yBot){
   ctx.closePath(); ctx.fill();
 }
 
-/* ---- 지진 (진원 깊이별 색) ---- */
+/* ---- 지진 (진원 깊이별 색) ----
+   깊이 기준면(QREF)은 해수면이 아니라 각 장면의 지표/해저면 — 해구 부근 진원이
+   제대로 '천발(노랑)'로 보이도록 장면 시작에서 설정한다. QTH: 천발/중발 경계(px). */
+let QREF = SEA, QTH = [78, 185];
+function setQuakeScale(ref, th){ QREF = ref; QTH = th; }
 function qColorByY(y){
-  const d = y - SEA;              // 화면상 깊이(px)
-  if(d < 78)  return '#ffe066';   // 천발
-  if(d < 185) return '#ff9f43';   // 중발
-  return '#ff5252';               // 심발
+  const d = y - QREF;             // 지표(해저면) 기준 깊이(px)
+  if(d < QTH[0]) return '#ffe066';   // 천발
+  if(d < QTH[1]) return '#ff9f43';   // 중발
+  return '#ff5252';                  // 심발
 }
 function drawQuake(x, y, seed, colorOverride){
   if(!state.show.quake) return;
@@ -589,11 +598,14 @@ function sceneTitle(){
   ctx.fillText(`t = ${Math.round(state.t*100)}%`, gx+gw-118, gy+16);
   ctx.restore();
 }
-/* ---- 시점 조작 안내 (작은 보조 안내 — 조작을 시작하면 서서히 사라짐) ---- */
+/* ---- 시점 조작 안내 (작은 보조 안내 — 조작하거나 잠시 지나면 사라지고, 장면 전환 때 잠깐 재표시) ---- */
 function viewHint(dt){
-  if(CAM.used) CAM.hint = Math.max(0, CAM.hint - dt*0.7);
+  CAM.hintAge += dt;
+  if(CAM.hintAge > 6) CAM.hint = Math.max(0, CAM.hint - dt*0.9);
   if(CAM.hint <= 0.01) return;
-  const msg = '🖱️ 마우스 휠·드래그(↕)로 위·아래 시점을 조절해 단면과 윗면을 함께 살펴보세요';
+  const msg = COARSE_PTR
+    ? '👆 위·아래로 쓸어 시점을 조절해 단면과 윗면을 함께 살펴보세요'
+    : '🖱️ 마우스 휠·드래그(↕)로 위·아래 시점을 조절해 단면과 윗면을 함께 살펴보세요';
   ctx.save();
   ctx.globalAlpha = Math.min(0.92, CAM.hint);
   ctx.font = '600 12px Pretendard,"Noto Sans KR",sans-serif';
@@ -618,12 +630,13 @@ function mantleFill(lithoBotF){
 const C = {
   oceanCrust:'#31485a', oceanFloorOld:'#46586330',
   litho:'#4a3527', contCrust:'#8a6d3b',
-  stripeA:'#2f9e63', stripeB:'#8fd19a', oldFloor:'#4b5c66',
+  stripeA:'#27925b', stripeB:'#a9e0b2', oldFloor:'#4b5c66',
 };
 
 /* ===================== 1. 발산형 — 해령 (동태평양 해령) ===================== */
 function sceneRidge(t){
   const xc = 450;
+  setQuakeScale(344, [78, 185]);        // 진원 깊이 기준: 해령 주변 해저면
   const grow = 0.35 + 0.65*phase(t, 0.05, 0.42);   // 해령 발달: 상승류 시작 후
   const surf = x => {
     const dx = Math.abs(x-xc);
@@ -702,6 +715,7 @@ function sceneRidge(t){
 
 /* ===================== 2. 발산형 — 열곡대 (동아프리카) ===================== */
 function sceneRift(t){
+  setQuakeScale(233, [120, 220]);       // 열곡대: 전부 천발
   const xc = 450, w = 70 + 160*phase(t, 0.08, 0.45), dp = 8 + 60*phase(t, 0.08, 0.5);
   const surf = x => {
     const dx = Math.abs(x-xc);
@@ -894,12 +908,13 @@ function benioff(geo, uT, ulen, n=24){
 /* ===================== 3. 수렴형 — 해양판+대륙판 (안데스) ===================== */
 function sceneOC(t){
   const xt = 385, xm = 615;                    // 해구, 산맥 중심
+  setQuakeScale(336, [50, 120]);       // 진원 깊이 기준: 해저면 — 해구 부근은 천발(노랑)
   const deepen = 0.55 + 0.45*phase(t, 0.08, 0.5);   // 판이 점점 깊이 휘어 들어감(해구도 함께 발달)
   // thick = 해양 지각(15) + 암석권 맨틀(32): 진한 갈색(암석권 맨틀)이 대륙 쪽과 같은 두께
   const SLB = {x0:X0, y0:336, flat:150, bend:230, dip:0.72, total:500, thick:47, crustTh:15};
   const geo  = makeSlab(SLB, deepen);          // 현재 섭입판 형상 (해양판 전체와 한 몸)
   const geoF = makeSlab(SLB, 1);               // 완성 형상: 화산 등 고정 위치 계산용
-  const wedF = slabAtDepth(geoF, 462);
+  const wedF = slabAtDepth(geoF, 448);
   const xv   = wedF.x + 42;                    // 화산: 맨틀 쐐기 위 대륙 지표
   const mh = 90*phase(t, 0.3, 0.92);           // 산맥 높이: 수렴이 진행된 뒤 성장
   const ty = slabYat(geo, xt);                 // 해구 바닥 = 휘어 내려가는 판의 윗면
@@ -916,7 +931,7 @@ function sceneOC(t){
   const uT = slabUatX(geo, xt);                // 해구 위치의 곡선 파라미터
   const ulen = lerp(uT+0.04, 1, phase(t, 0.08, 0.62));   // 섭입 진행
   // 마그마 근원: 섭입판 "위쪽" 맨틀 쐐기 속 (윗면에서 법선 방향으로 띄움)
-  const wed = slabAtDepth(geo, 462);
+  const wed = slabAtDepth(geo, 448);
   const srcX = wed.x + Math.sin(wed.ang)*20, srcY = wed.y - Math.cos(wed.ang)*20;
 
   mantleFill(lithoBot);
@@ -930,12 +945,14 @@ function sceneOC(t){
   if(t > 0.32){
     magmaConduit(srcX, srcY, xv, surf(xv)+4, 12, phase(t, 0.5, 0.78), phase(t, 0.35, 0.5));
   }
+  // 윗면 띠가 해구 쪽으로 흘러 판의 이동이 보이게 (해양판 →, 대륙판 ←)
+  const flow = state.clock*22;
   topFace(surf, x => {
-    if(x < xt) return '#4b5c66';
+    if(x < xt) return Math.floor((x - flow)/36)%2 ? '#4b5c66' : '#51626d';
     const y = surf(x);
     if(y < 158) return '#d7dde3';        // 만년설
     if(y < 205) return '#8b7d5a';        // 바위산
-    return (Math.floor(x/30)%2===0) ? '#5f7a45' : '#587340';
+    return (Math.floor((x + flow*0.5)/30)%2===0) ? '#5f7a45' : '#587340';
   });
   sideAuto(surf, crustBot, lithoBot, xe => xe < xt ? C.oceanCrust : C.contCrust);
   blockEdges(surf);
@@ -965,11 +982,12 @@ function sceneOC(t){
 /* ===================== 4. 수렴형 — 해양판+해양판 (마리아나·호상열도) ===================== */
 function sceneOO(t){
   const xt = 430;                              // 해구
+  setQuakeScale(334, [50, 120]);       // 진원 깊이 기준: 해저면 — 해구 부근은 천발(노랑)
   const deepen = 0.55 + 0.45*phase(t, 0.08, 0.5);   // 판이 점점 깊이 휘어 들어감(해구도 함께 발달)
   const SLB = {x0:X0, y0:334, flat:226, bend:180, dip:0.90, total:508, thick:61, crustTh:15};
   const geo  = makeSlab(SLB, deepen);          // 현재 섭입판 형상 (태평양판 전체와 한 몸)
   const geoF = makeSlab(SLB, 1);               // 완성 형상: 화산섬 등 고정 위치 계산용
-  const xa   = slabAtDepth(geoF, 458).x + 30;  // 호상열도(화산섬): 맨틀 쐐기 위
+  const xa   = slabAtDepth(geoF, 448).x + 30;  // 호상열도(화산섬): 맨틀 쐐기 위
   const ty = slabYat(geo, xt);                 // 해구 바닥 = 휘어 내려가는 판의 윗면
   const surf = x => x <= xt ? slabYat(geo, x)                    // 바깥쪽 사면 = 섭입판 윗면
                             : lerp(ty, 330, smooth((x-xt)/64));  // 안쪽 사면 = 상부판 앞끝
@@ -978,7 +996,7 @@ function sceneOO(t){
   const uT = slabUatX(geo, xt);
   const ulen = lerp(uT+0.04, 1, phase(t, 0.06, 0.55));   // 섭입 진행
   // 마그마 근원: 섭입판 "위쪽" 맨틀 쐐기 속
-  const wed = slabAtDepth(geo, 458);
+  const wed = slabAtDepth(geo, 448);
   const srcX = wed.x + Math.sin(wed.ang)*20, srcY = wed.y - Math.cos(wed.ang)*20;
 
   mantleFill(lithoBot);
@@ -992,12 +1010,15 @@ function sceneOO(t){
   if(t > 0.34){
     magmaConduit(srcX, srcY, xa, surf(xa)+2, 8, phase(t, 0.5, 0.74), phase(t, 0.36, 0.5));
   }
-  topFace(surf, x => x < xt ? '#3f4f59' : '#51636f');
+  // 윗면 띠가 해구 쪽으로 흘러 "판이 이동하다 소멸"하는 것이 보이게
+  const flow = state.clock*22;
+  topFace(surf, x => x < xt ? (Math.floor((x - flow)/36)%2 ? '#3f4f59' : '#45565f')
+                            : (Math.floor((x + flow)/36)%2 ? '#51636f' : '#586a76'));
   sideAuto(surf, crustBot, lithoBot, C.oceanCrust);
   blockEdges(surf);
   // 대표 화산섬 1개: 마그마 통로(xa) 바로 위에서 성장 (물보다 먼저 그리면 잠긴 부분이 물빛)
   const vBaseY = surf(xa)+4, vTopY = vBaseY - vh;
-  volcano(xa, vBaseY, vh, 46, {erupting: t>0.8 && vTopY >= SEA-2, underwater: true, color:'#54423a'});
+  volcano(xa, vBaseY, vh, 46, {erupting: t>0.8 && vTopY >= SEA-2, underwater: true, color:'#3f3831'});   // 수중부: 어두운 실루엣
   drawWater(surf);
   if(vh > 2 && vTopY < SEA-2){
     // 수면 위로 솟은 부분은 물 그리기 뒤에 다시 그려서 '섬'으로 보이게
@@ -1028,6 +1049,7 @@ function sceneOO(t){
 /* ===================== 5. 수렴형 — 대륙판+대륙판 (히말라야) ===================== */
 function sceneCC(t){
   const xc = 460;
+  setQuakeScale(244, [78, 185]);        // 대륙 지표 기준 — 심발 없음
   const appr = phase(t, 0, 0.24);        // 1단계: 두 대륙 접근(사이의 옛 바다가 닫힘)
   const cp   = phase(t, 0.24, 0.95);     // 2단계: 충돌 — 압축·습곡·융기
   const gap  = 52*(1-appr);              // 남은 바다(테티스해)의 반폭
@@ -1107,7 +1129,8 @@ function sceneCC(t){
   for(let i=0;i<10;i++){
     if(t < 0.28) break;
     const qx = xc + (rnd(i*13+2)-0.5)*mw*2.2;
-    const qy = surf(qx) + 14 + rnd(i*7+5)*(crustBot(qx)-surf(qx)-24);
+    // 심발 없음: 지표 기준 최대 깊이를 중발 범위 안으로 제한
+    const qy = surf(qx) + 14 + rnd(i*7+5)*Math.min(crustBot(qx)-surf(qx)-24, 165);
     drawQuake(qx, qy, i);
   }
   plateArrow(200, 0.45,  1, 0, '#f87171', 82, surf(200)-34);
@@ -1128,6 +1151,7 @@ function sceneCC(t){
 /* ===================== 6. 보존형 — 변환 단층 (산안드레아스) ===================== */
 function sceneTr(t){
   const xc = 450;
+  setQuakeScale(250, [78, 185]);
   const surf = () => 250, crustBot = () => 396, lithoBot = () => 428;
   const CYC = 4, TOTAL = 0.30;                       // 총 변위(블록 깊이 비율)
   const D = TOTAL*t;                                 // 멀리서 본 꾸준한 이동
@@ -1278,6 +1302,7 @@ INFO.forEach((inf, i) => {
 function selectScene(i){
   state.idx = ((i % 6) + 6) % 6;
   state.t = 0; state.playing = true;
+  CAM.hint = 1; CAM.hintAge = CAM.everUsed ? 4.2 : 0;   // 장면 전환: 안내 재표시(익숙하면 짧게)
   syncPlayBtn();
   [...tabsEl.children].forEach((b, j) => b.classList.toggle('on', j === state.idx));
   renderInfo();
@@ -1313,11 +1338,12 @@ rngSpeed.addEventListener('input', () => {
   valSpeed.textContent = state.speed.toFixed(2).replace(/0$/,'') + '×';
 });
 // 마우스로 입체 확인 — 슬라이더 없이 캔버스 위에서 직접.
+function camUsed(){ CAM.everUsed = true; CAM.hintAge = Math.max(CAM.hintAge, 6); }
 // 휠: 위로 굴리면 시점이 높아져 윗면이, 아래로 굴리면 낮아져 단면이 잘 보임 (줌 아님, 거리 일정)
 cv.addEventListener('wheel', e => {
   e.preventDefault();
-  CAM.elev = clamp(CAM.elev - e.deltaY*0.0015, CAM.min, CAM.max);
-  CAM.used = true;
+  CAM.target = clamp(CAM.target - e.deltaY*0.0015, CAM.min, CAM.max);
+  camUsed();
 }, {passive:false});
 // 드래그: 세로 이동량(deltaY)만 반영 — 좌우 자유 회전은 없음 (앞쪽 방향 유지)
 let viewDragY = null;
@@ -1328,13 +1354,17 @@ cv.addEventListener('pointerdown', e => {
 cv.addEventListener('pointermove', e => {
   if(viewDragY === null) return;
   const dy = e.clientY - viewDragY; viewDragY = e.clientY;
-  CAM.elev = clamp(CAM.elev - dy*0.0035, CAM.min, CAM.max);   // 위로 드래그 = 내려다보기
-  CAM.used = true;
+  CAM.elev = clamp(CAM.elev - dy*0.0035, CAM.min, CAM.max);   // 위로 드래그 = 내려다보기 (즉시 반응)
+  CAM.target = CAM.elev;
+  camUsed();
 });
 const endViewDrag = () => { viewDragY = null; };
 cv.addEventListener('pointerup', endViewDrag);
 cv.addEventListener('pointercancel', endViewDrag);
-cv.addEventListener('dblclick', () => { CAM.elev = CAM.def; });   // 더블클릭: 기본 시점으로
+cv.addEventListener('dblclick', () => { CAM.target = CAM.def; });   // 더블클릭: 기본 시점으로
+// 시점 프리셋: 수업 시연용 바로가기 (연속 조절 UI가 아니라 목표 각도만 지정)
+$('btnFront').addEventListener('click', e => { CAM.target = 10*DEG2RAD; camUsed(); e.target.blur(); });
+$('btnTop').addEventListener('click',   e => { CAM.target = 48*DEG2RAD; camUsed(); e.target.blur(); });
 $('chkQuake').addEventListener('change', e => state.show.quake = e.target.checked);
 $('chkMagma').addEventListener('change', e => state.show.magma = e.target.checked);
 $('chkConv').addEventListener('change', e => state.show.conv = e.target.checked);
@@ -1345,6 +1375,12 @@ window.addEventListener('keydown', e => {
   if(tag === 'input' || tag === 'textarea' || tag === 'select') return;
   if(e.key === 'ArrowLeft'){ selectScene(state.idx - 1); e.preventDefault(); }
   else if(e.key === 'ArrowRight'){ selectScene(state.idx + 1); e.preventDefault(); }
+  else if(e.key === 'ArrowUp'){   // 키보드로도 시점 조절 (접근성)
+    CAM.target = clamp(CAM.target + 4*DEG2RAD, CAM.min, CAM.max); camUsed(); e.preventDefault();
+  }
+  else if(e.key === 'ArrowDown'){
+    CAM.target = clamp(CAM.target - 4*DEG2RAD, CAM.min, CAM.max); camUsed(); e.preventDefault();
+  }
   else if(e.key === ' ' || e.code === 'Space'){
     state.playing = !state.playing; syncPlayBtn(); e.preventDefault();
   }
@@ -1374,6 +1410,7 @@ function frame(now){
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.clearRect(0, 0, VW, VH);
   // 카메라: 방위각 고정 — 상하 시점(elevation)만 반영. 낮으면 단면, 높으면 윗면이 잘 보임
+  CAM.elev += (CAM.target - CAM.elev) * Math.min(1, dt*8);   // 목표 각도로 부드럽게
   const ce = (CAM.elev - CAM.min)/(CAM.max - CAM.min);   // 0(낮음)~1(높음)
   SK.x = 84;                                        // 깊이 방향(좌우) 고정 → 앞쪽 방향 유지
   SK.y = -10 - 100*ce;                              // 시점이 높을수록 윗면이 넓게 보임
